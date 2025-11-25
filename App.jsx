@@ -956,20 +956,6 @@ const ChickenBattleArena = () => {
                     const parsed = d3.csvParse(text);
                     return parsed.map(row => {
                         const newRow = {};
-                        for (const key in row) newRow[key.trim()] = row[key];
-                        return newRow;
-                    });
-                };
-
-                // Load Dong-level data
-                const [salesData, closureData] = await Promise.all([
-                    fetchCsv('/sales_dong.csv'),
-                    fetchCsv('/store_dong.csv')
-                ]);
-
-                // Inject Gu Name based on Dong Code
-                const enrichData = (data) => {
-                    data.forEach(d => {
                         if (!d['자치구_코드_명'] && d['행정동_코드']) {
                             const guCode = d['행정동_코드'].substring(0, 5);
                             d['자치구_코드_명'] = guCodeMap[guCode] || "Unknown";
