@@ -943,440 +943,480 @@ const ChickenBattleArena = () => {
         "11500": "강서구", "11530": "구로구", "11545": "금천구", "11560": "영등포구", "11590": "동작구",
         "11620": "관악구", "11650": "서초구", "11680": "강남구", "11710": "송파구", "11740": "강동구"
     };
-    // Extract Filter Options
-    const gus = new Set();
-    const dongs = {}; // {Gu: [Dong1, Dong2]}
-    const industries = new Set();
+    useEffect(() => {
+        const loadData = async () => {
+            try {
+                console.log("Starting data load...");
+                const fetchCsv = async (url) => {
+                    const response = await fetch(url);
+                    const buffer = await response.arrayBuffer();
+                    const decoder = new TextDecoder('euc-kr');
+                    const text = decoder.decode(buffer);
+                    const parsed = d3.csvParse(text);
+                    return parsed.map(row => {
+                        const newRow = {};
+                        for (const key in row) newRow[key.trim()] = row[key];
+                        return newRow;
+                    });
+                };
 
-    salesData.forEach(d => {
-        const gu = d['자치구_코드_명'];
-        const dong = d['행정동_코드_명'];
-        const industry = d['서비스_업종_코드_명'];
+                // Load Dong-level data
+                const baseUrl = import.meta.env.BASE_URL;
+                const [salesData, closureData] = await Promise.all([
+                    fetchCsv(`${baseUrl}sales_dong.csv`),
+                    fetchCsv(`${baseUrl}store_dong.csv`)
+                ]);
 
-        if (gu) gus.add(gu);
-        if (industry) industries.add(industry);
+                // Inject Gu Name based on Dong Code
+                const enrichData = (data) => {
+                    data.forEach(d => {
+                        if (!d['자치구_코드_명'] && d['행정동_코드']) {
+                            const guCode = d['행정동_코드'].substring(0, 5);
+                            d['자치구_코드_명'] = guCodeMap[guCode] || "Unknown";
+                        }
+                    });
+                };
 
-        if (gu && dong) {
-            if (!dongs[gu]) dongs[gu] = new Set();
-            dongs[gu].add(dong);
-        }
-    });
+                enrichData(salesData);
+                enrichData(closureData);
 
-    setGuList(Array.from(gus).sort());
-    setIndustryList(Array.from(industries).sort());
+                rawSalesDataRef.current = salesData;
+                rawClosureDataRef.current = closureData;
 
-    // Convert Dong Sets to Arrays
-    const dongMap = {};
-    for (const gu in dongs) {
-        dongMap[gu] = Array.from(dongs[gu]).sort();
-    }
-    setDongList(dongMap);
+                // Extract Filter Options
+                const gus = new Set();
+                const dongs = {}; // {Gu: [Dong1, Dong2]}
+                const industries = new Set();
 
-    processData(salesData, closureData);
+                salesData.forEach(d => {
+                    const gu = d['자치구_코드_명'];
+                    const dong = d['행정동_코드_명'];
+                    const industry = d['서비스_업종_코드_명'];
 
-} catch (error) {
-    console.error("Failed to load data:", error);
-    setLoading(false);
-}
+                    if (gu) gus.add(gu);
+                    if (industry) industries.add(industry);
+
+                    if (gu && dong) {
+                        if (!dongs[gu]) dongs[gu] = new Set();
+                        dongs[gu].add(dong);
+                    }
+                });
+
+                setGuList(Array.from(gus).sort());
+                setIndustryList(Array.from(industries).sort());
+
+                // Convert Dong Sets to Arrays
+                const dongMap = {};
+                for (const gu in dongs) {
+                    dongMap[gu] = Array.from(dongs[gu]).sort();
+                }
+                setDongList(dongMap);
+
+                processData(salesData, closureData);
+
+            } catch (error) {
+                console.error("Failed to load data:", error);
+                setLoading(false);
+            }
         };
 
-loadData();
+        loadData();
     }, []);
 
-// Re-process data when filters change
-useEffect(() => {
-    if (rawSalesDataRef.current.length > 0) {
-        processData(rawSalesDataRef.current, rawClosureDataRef.current);
-    }
-}, [selectedGu, selectedDong, selectedIndustry, minRevenue, timeRange]);
-
-const processData = (salesData, closureData) => {
-    setLoading(true);
-
-    // 1. Filter Data
-    let filteredSales = salesData;
-    let filteredClosure = closureData;
-
-    if (selectedGu !== 'All') {
-        filteredSales = filteredSales.filter(d => d['자치구_코드_명'] === selectedGu);
-        filteredClosure = filteredClosure.filter(d => d['자치구_코드_명'] === selectedGu);
-    }
-
-    if (selectedDong !== 'All') {
-        filteredSales = filteredSales.filter(d => d['행정동_코드_명'] === selectedDong);
-        filteredClosure = filteredClosure.filter(d => d['행정동_코드_명'] === selectedDong);
-    }
-
-    if (selectedIndustry !== 'All') {
-        filteredSales = filteredSales.filter(d => d['서비스_업종_코드_명'] === selectedIndustry);
-        filteredClosure = filteredClosure.filter(d => d['서비스_업종_코드_명'] === selectedIndustry);
-    }
-
-    // 2. Process Historical Data
-    const historyMap = {};
-    const getYQ = (d) => d['기준_년분기_코드'] ? parseInt(d['기준_년분기_코드']) : parseInt(d['기준_년_코드'] + d['기준_분기_코드']);
-
-    filteredSales.forEach(d => {
-        const id = selectedGu === 'All' ? d['자치구_코드_명'] : d['행정동_코드_명'];
-        if (!id) return;
-
-        const yq = getYQ(d);
-        if (!historyMap[id]) historyMap[id] = [];
-
-        let entry = historyMap[id].find(e => e.yq === yq);
-        if (!entry) {
-            entry = { yq, sales: 0, weekendSales: 0, count: 0 };
-            historyMap[id].push(entry);
+    // Re-process data when filters change
+    useEffect(() => {
+        if (rawSalesDataRef.current.length > 0) {
+            processData(rawSalesDataRef.current, rawClosureDataRef.current);
         }
-        entry.sales += parseFloat(d['당월_매출_금액'] || 0);
-        entry.weekendSales += parseFloat(d['주말_매출_금액'] || 0);
-        entry.count += 1;
-    });
+    }, [selectedGu, selectedDong, selectedIndustry, minRevenue, timeRange]);
 
-    filteredClosure.forEach(d => {
-        const id = selectedGu === 'All' ? d['자치구_코드_명'] : d['행정동_코드_명'];
-        if (!id) return;
+    const processData = (salesData, closureData) => {
+        setLoading(true);
 
-        const yq = getYQ(d);
-        if (historyMap[id]) {
+        // 1. Filter Data
+        let filteredSales = salesData;
+        let filteredClosure = closureData;
+
+        if (selectedGu !== 'All') {
+            filteredSales = filteredSales.filter(d => d['자치구_코드_명'] === selectedGu);
+            filteredClosure = filteredClosure.filter(d => d['자치구_코드_명'] === selectedGu);
+        }
+
+        if (selectedDong !== 'All') {
+            filteredSales = filteredSales.filter(d => d['행정동_코드_명'] === selectedDong);
+            filteredClosure = filteredClosure.filter(d => d['행정동_코드_명'] === selectedDong);
+        }
+
+        if (selectedIndustry !== 'All') {
+            filteredSales = filteredSales.filter(d => d['서비스_업종_코드_명'] === selectedIndustry);
+            filteredClosure = filteredClosure.filter(d => d['서비스_업종_코드_명'] === selectedIndustry);
+        }
+
+        // 2. Process Historical Data
+        const historyMap = {};
+        const getYQ = (d) => d['기준_년분기_코드'] ? parseInt(d['기준_년분기_코드']) : parseInt(d['기준_년_코드'] + d['기준_분기_코드']);
+
+        filteredSales.forEach(d => {
+            const id = selectedGu === 'All' ? d['자치구_코드_명'] : d['행정동_코드_명'];
+            if (!id) return;
+
+            const yq = getYQ(d);
+            if (!historyMap[id]) historyMap[id] = [];
+
             let entry = historyMap[id].find(e => e.yq === yq);
-            if (entry) {
-                entry.closureRate = parseFloat(d['폐업_률'] || 0);
-                entry.survival = 100 - entry.closureRate;
+            if (!entry) {
+                entry = { yq, sales: 0, weekendSales: 0, count: 0 };
+                historyMap[id].push(entry);
+            }
+            entry.sales += parseFloat(d['당월_매출_금액'] || 0);
+            entry.weekendSales += parseFloat(d['주말_매출_금액'] || 0);
+            entry.count += 1;
+        });
+
+        filteredClosure.forEach(d => {
+            const id = selectedGu === 'All' ? d['자치구_코드_명'] : d['행정동_코드_명'];
+            if (!id) return;
+
+            const yq = getYQ(d);
+            if (historyMap[id]) {
+                let entry = historyMap[id].find(e => e.yq === yq);
+                if (entry) {
+                    entry.closureRate = parseFloat(d['폐업_률'] || 0);
+                    entry.survival = 100 - entry.closureRate;
+                }
+            }
+        });
+
+        setHistoryData(historyMap);
+
+        // 3. Process Deep Dive Data
+        const deepDiveMap = {};
+
+        filteredSales.forEach(d => {
+            const id = selectedGu === 'All' ? d['자치구_코드_명'] : d['행정동_코드_명'];
+            if (!id) return;
+
+            if (!deepDiveMap[id]) {
+                deepDiveMap[id] = { age: {}, time: {}, day: {} };
+            }
+
+            // Age
+            const ageCols = {
+                "10s": "연령대_10_매출_금액",
+                "20s": "연령대_20_매출_금액",
+                "30s": "연령대_30_매출_금액",
+                "40s": "연령대_40_매출_금액",
+                "50s": "연령대_50_매출_금액",
+                "60s+": "연령대_60_이상_매출_금액"
+            };
+            for (const [label, col] of Object.entries(ageCols)) {
+                deepDiveMap[id].age[label] = (deepDiveMap[id].age[label] || 0) + parseFloat(d[col] || 0);
+            }
+
+            // Time
+            const timeCols = {
+                "00-06": "시간대_00~06_매출_금액",
+                "06-11": "시간대_06~11_매출_금액",
+                "11-14": "시간대_11~14_매출_금액",
+                "14-17": "시간대_14~17_매출_금액",
+                "17-21": "시간대_17~21_매출_금액",
+                "21-24": "시간대_21~24_매출_금액"
+            };
+            for (const [label, col] of Object.entries(timeCols)) {
+                deepDiveMap[id].time[label] = (deepDiveMap[id].time[label] || 0) + parseFloat(d[col] || 0);
+            }
+
+            // Day
+            const dayCols = {
+                "Mon": "월요일_매출_금액",
+                "Tue": "화요일_매출_금액",
+                "Wed": "수요일_매출_금액",
+                "Thu": "목요일_매출_금액",
+                "Fri": "금요일_매출_금액",
+                "Sat": "토요일_매출_금액",
+                "Sun": "일요일_매출_금액"
+            };
+            for (const [label, col] of Object.entries(dayCols)) {
+                deepDiveMap[id].day[label] = (deepDiveMap[id].day[label] || 0) + parseFloat(d[col] || 0);
+            }
+        });
+
+        // Normalize Deep Dive Data
+        Object.keys(deepDiveMap).forEach(id => {
+            const dd = deepDiveMap[id];
+            const totalAge = Object.values(dd.age).reduce((a, b) => a + b, 0);
+            if (totalAge > 0) for (const key in dd.age) dd.age[key] = (dd.age[key] / totalAge) * 100;
+
+            const totalTime = Object.values(dd.time).reduce((a, b) => a + b, 0);
+            if (totalTime > 0) for (const key in dd.time) dd.time[key] = (dd.time[key] / totalTime) * 100;
+
+            const totalDay = Object.values(dd.day).reduce((a, b) => a + b, 0);
+            if (totalDay > 0) for (const key in dd.day) dd.day[key] = (dd.day[key] / totalDay) * 100;
+        });
+
+        // 4. Latest Data & Aggregation
+        const getMaxYQ = (data) => {
+            let maxCode = 0;
+            data.forEach(d => {
+                const code = getYQ(d);
+                if (code > maxCode) maxCode = code;
+            });
+            return maxCode;
+        };
+
+        const maxSalesYQ = getMaxYQ(filteredSales);
+        const maxClosureYQ = getMaxYQ(filteredClosure);
+
+        const currentSales = filteredSales.filter(d => getYQ(d) === maxSalesYQ);
+        const currentClosure = filteredClosure.filter(d => getYQ(d) === maxClosureYQ);
+
+        const districtMap = new Map();
+
+        currentSales.forEach(d => {
+            const id = selectedGu === 'All' ? d['자치구_코드_명'] : d['행정동_코드_명'];
+            if (!id) return;
+
+            if (!districtMap.has(id)) {
+                districtMap.set(id, {
+                    name: id,
+                    sales: 0,
+                    weekendSales: 0,
+                    count: 0,
+                    closureRateSum: 0,
+                    storeCount: 0,
+                    closureCount: 0
+                });
+            }
+            const item = districtMap.get(id);
+            item.sales += parseFloat(d['당월_매출_금액'] || 0);
+            item.weekendSales += parseFloat(d['주말_매출_금액'] || 0);
+            item.count += 1;
+        });
+
+        currentClosure.forEach(d => {
+            const id = selectedGu === 'All' ? d['자치구_코드_명'] : d['행정동_코드_명'];
+            if (districtMap.has(id)) {
+                const item = districtMap.get(id);
+                item.closureRateSum += parseFloat(d['폐업_률'] || 0);
+                item.storeCount += parseFloat(d['점포_수'] || 0);
+                item.closureCount += 1;
+            }
+        });
+
+        // 5. Final Metrics & Filtering by Min Revenue
+        let processed = Array.from(districtMap.values()).map(d => {
+            return {
+                id: d.name,
+                name: d.name,
+                rawSales: d.sales,
+                rawSurvival: d.closureCount > 0 ? (100 - (d.closureRateSum / d.closureCount)) : 0,
+                rawSaturation: d.storeCount,
+                rawEfficiency: d.storeCount > 0 ? (d.sales / d.storeCount) : 0,
+                rawWeekend: d.sales > 0 ? (d.weekendSales / d.sales * 100) : 0,
+                deepDive: deepDiveMap[d.name] || { age: {}, time: {}, day: {} }
+            };
+        });
+
+        // Filter by Minimum Revenue
+        if (minRevenue > 0) {
+            processed = processed.filter(d => d.rawSales >= minRevenue * 100000000); // Input in 100M KRW
+        }
+
+        const getExtents = (key) => d3.extent(processed, d => d[key]);
+        const salesExt = getExtents('rawSales');
+        const survivalExt = getExtents('rawSurvival');
+        const saturationExt = getExtents('rawSaturation');
+        const efficiencyExt = getExtents('rawEfficiency');
+        const weekendExt = getExtents('rawWeekend');
+
+        const scale = (val, extent) => {
+            if (!extent[0] && !extent[1]) return 0;
+            if (extent[0] === extent[1]) return 50;
+            return ((val - extent[0]) / (extent[1] - extent[0])) * 100;
+        };
+
+        const finalData = processed.map(d => ({
+            id: d.id,
+            name: d.name,
+            stats: [
+                { axis: "매출력 (Sales)", value: scale(d.rawSales, salesExt), raw: (d.rawSales / 100000000).toFixed(1) + "억원" },
+                { axis: "생존력 (Survival)", value: scale(d.rawSurvival, survivalExt), raw: d.rawSurvival.toFixed(1) + "%" },
+                { axis: "포화도 (Saturation)", value: scale(d.rawSaturation, saturationExt), raw: d.rawSaturation + "개" },
+                { axis: "효율성 (Efficiency)", value: scale(d.rawEfficiency, efficiencyExt), raw: (d.rawEfficiency / 10000).toFixed(1) + "만원/점포" },
+                { axis: "주말바이브 (Weekend)", value: scale(d.rawWeekend, weekendExt), raw: d.rawWeekend.toFixed(1) + "%" }
+            ],
+            deepDive: d.deepDive
+        }));
+
+        // Calculate Average
+        const avgRaw = { sales: 0, survival: 0, saturation: 0, efficiency: 0, weekend: 0 };
+        processed.forEach(d => {
+            avgRaw.sales += d.rawSales;
+            avgRaw.survival += d.rawSurvival;
+            avgRaw.saturation += d.rawSaturation;
+            avgRaw.efficiency += d.rawEfficiency;
+            avgRaw.weekend += d.rawWeekend;
+        });
+        const count = processed.length;
+        if (count > 0) {
+            avgRaw.sales /= count;
+            avgRaw.survival /= count;
+            avgRaw.saturation /= count;
+            avgRaw.efficiency /= count;
+            avgRaw.weekend /= count;
+        }
+        const averageData = {
+            stats: [
+                { axis: "매출력 (Sales)", value: scale(avgRaw.sales, salesExt), raw: (avgRaw.sales / 100000000).toFixed(1) + "억원" },
+                { axis: "생존력 (Survival)", value: scale(avgRaw.survival, survivalExt), raw: avgRaw.survival.toFixed(1) + "%" },
+                { axis: "포화도 (Saturation)", value: scale(avgRaw.saturation, saturationExt), raw: avgRaw.saturation.toFixed(0) + "개" },
+                { axis: "효율성 (Efficiency)", value: scale(avgRaw.efficiency, efficiencyExt), raw: (avgRaw.efficiency / 10000).toFixed(1) + "만원/점포" },
+                { axis: "주말바이브 (Weekend)", value: scale(avgRaw.weekend, weekendExt), raw: avgRaw.weekend.toFixed(1) + "%" }
+            ],
+            deepDive: null
+        };
+        setAverageData(averageData);
+
+        setSeoulData(finalData);
+        window.seoulData = finalData;
+
+        // Reset selection if invalid
+        const validIds = finalData.map(d => d.id);
+        const newSelection = selectedIds.filter(id => validIds.includes(id));
+        if (newSelection.length < 2 && finalData.length >= 2) {
+            setSelectedIds([finalData[0].id, finalData[1].id]);
+        } else {
+            setSelectedIds(newSelection);
+        }
+
+        setLoading(false);
+    };
+
+    const handleSelect = (id) => {
+        if (selectedIds.includes(id)) {
+            setSelectedIds(selectedIds.filter(s => s !== id));
+        } else {
+            if (selectedIds.length >= 2) {
+                setSelectedIds([selectedIds[1], id]);
+            } else {
+                setSelectedIds([...selectedIds, id]);
             }
         }
-    });
-
-    setHistoryData(historyMap);
-
-    // 3. Process Deep Dive Data
-    const deepDiveMap = {};
-
-    filteredSales.forEach(d => {
-        const id = selectedGu === 'All' ? d['자치구_코드_명'] : d['행정동_코드_명'];
-        if (!id) return;
-
-        if (!deepDiveMap[id]) {
-            deepDiveMap[id] = { age: {}, time: {}, day: {} };
-        }
-
-        // Age
-        const ageCols = {
-            "10s": "연령대_10_매출_금액",
-            "20s": "연령대_20_매출_금액",
-            "30s": "연령대_30_매출_금액",
-            "40s": "연령대_40_매출_금액",
-            "50s": "연령대_50_매출_금액",
-            "60s+": "연령대_60_이상_매출_금액"
-        };
-        for (const [label, col] of Object.entries(ageCols)) {
-            deepDiveMap[id].age[label] = (deepDiveMap[id].age[label] || 0) + parseFloat(d[col] || 0);
-        }
-
-        // Time
-        const timeCols = {
-            "00-06": "시간대_00~06_매출_금액",
-            "06-11": "시간대_06~11_매출_금액",
-            "11-14": "시간대_11~14_매출_금액",
-            "14-17": "시간대_14~17_매출_금액",
-            "17-21": "시간대_17~21_매출_금액",
-            "21-24": "시간대_21~24_매출_금액"
-        };
-        for (const [label, col] of Object.entries(timeCols)) {
-            deepDiveMap[id].time[label] = (deepDiveMap[id].time[label] || 0) + parseFloat(d[col] || 0);
-        }
-
-        // Day
-        const dayCols = {
-            "Mon": "월요일_매출_금액",
-            "Tue": "화요일_매출_금액",
-            "Wed": "수요일_매출_금액",
-            "Thu": "목요일_매출_금액",
-            "Fri": "금요일_매출_금액",
-            "Sat": "토요일_매출_금액",
-            "Sun": "일요일_매출_금액"
-        };
-        for (const [label, col] of Object.entries(dayCols)) {
-            deepDiveMap[id].day[label] = (deepDiveMap[id].day[label] || 0) + parseFloat(d[col] || 0);
-        }
-    });
-
-    // Normalize Deep Dive Data
-    Object.keys(deepDiveMap).forEach(id => {
-        const dd = deepDiveMap[id];
-        const totalAge = Object.values(dd.age).reduce((a, b) => a + b, 0);
-        if (totalAge > 0) for (const key in dd.age) dd.age[key] = (dd.age[key] / totalAge) * 100;
-
-        const totalTime = Object.values(dd.time).reduce((a, b) => a + b, 0);
-        if (totalTime > 0) for (const key in dd.time) dd.time[key] = (dd.time[key] / totalTime) * 100;
-
-        const totalDay = Object.values(dd.day).reduce((a, b) => a + b, 0);
-        if (totalDay > 0) for (const key in dd.day) dd.day[key] = (dd.day[key] / totalDay) * 100;
-    });
-
-    // 4. Latest Data & Aggregation
-    const getMaxYQ = (data) => {
-        let maxCode = 0;
-        data.forEach(d => {
-            const code = getYQ(d);
-            if (code > maxCode) maxCode = code;
-        });
-        return maxCode;
     };
 
-    const maxSalesYQ = getMaxYQ(filteredSales);
-    const maxClosureYQ = getMaxYQ(filteredClosure);
+    const selectedData = seoulData.filter(d => selectedIds.includes(d.id));
 
-    const currentSales = filteredSales.filter(d => getYQ(d) === maxSalesYQ);
-    const currentClosure = filteredClosure.filter(d => getYQ(d) === maxClosureYQ);
-
-    const districtMap = new Map();
-
-    currentSales.forEach(d => {
-        const id = selectedGu === 'All' ? d['자치구_코드_명'] : d['행정동_코드_명'];
-        if (!id) return;
-
-        if (!districtMap.has(id)) {
-            districtMap.set(id, {
-                name: id,
-                sales: 0,
-                weekendSales: 0,
-                count: 0,
-                closureRateSum: 0,
-                storeCount: 0,
-                closureCount: 0
-            });
-        }
-        const item = districtMap.get(id);
-        item.sales += parseFloat(d['당월_매출_금액'] || 0);
-        item.weekendSales += parseFloat(d['주말_매출_금액'] || 0);
-        item.count += 1;
-    });
-
-    currentClosure.forEach(d => {
-        const id = selectedGu === 'All' ? d['자치구_코드_명'] : d['행정동_코드_명'];
-        if (districtMap.has(id)) {
-            const item = districtMap.get(id);
-            item.closureRateSum += parseFloat(d['폐업_률'] || 0);
-            item.storeCount += parseFloat(d['점포_수'] || 0);
-            item.closureCount += 1;
-        }
-    });
-
-    // 5. Final Metrics & Filtering by Min Revenue
-    let processed = Array.from(districtMap.values()).map(d => {
-        return {
-            id: d.name,
-            name: d.name,
-            rawSales: d.sales,
-            rawSurvival: d.closureCount > 0 ? (100 - (d.closureRateSum / d.closureCount)) : 0,
-            rawSaturation: d.storeCount,
-            rawEfficiency: d.storeCount > 0 ? (d.sales / d.storeCount) : 0,
-            rawWeekend: d.sales > 0 ? (d.weekendSales / d.sales * 100) : 0,
-            deepDive: deepDiveMap[d.name] || { age: {}, time: {}, day: {} }
-        };
-    });
-
-    // Filter by Minimum Revenue
-    if (minRevenue > 0) {
-        processed = processed.filter(d => d.rawSales >= minRevenue * 100000000); // Input in 100M KRW
+    if (loading) {
+        return <div className="loading-container">Loading market data...</div>;
     }
 
-    const getExtents = (key) => d3.extent(processed, d => d[key]);
-    const salesExt = getExtents('rawSales');
-    const survivalExt = getExtents('rawSurvival');
-    const saturationExt = getExtents('rawSaturation');
-    const efficiencyExt = getExtents('rawEfficiency');
-    const weekendExt = getExtents('rawWeekend');
-
-    const scale = (val, extent) => {
-        if (!extent[0] && !extent[1]) return 0;
-        if (extent[0] === extent[1]) return 50;
-        return ((val - extent[0]) / (extent[1] - extent[0])) * 100;
-    };
-
-    const finalData = processed.map(d => ({
-        id: d.id,
-        name: d.name,
-        stats: [
-            { axis: "매출력 (Sales)", value: scale(d.rawSales, salesExt), raw: (d.rawSales / 100000000).toFixed(1) + "억원" },
-            { axis: "생존력 (Survival)", value: scale(d.rawSurvival, survivalExt), raw: d.rawSurvival.toFixed(1) + "%" },
-            { axis: "포화도 (Saturation)", value: scale(d.rawSaturation, saturationExt), raw: d.rawSaturation + "개" },
-            { axis: "효율성 (Efficiency)", value: scale(d.rawEfficiency, efficiencyExt), raw: (d.rawEfficiency / 10000).toFixed(1) + "만원/점포" },
-            { axis: "주말바이브 (Weekend)", value: scale(d.rawWeekend, weekendExt), raw: d.rawWeekend.toFixed(1) + "%" }
-        ],
-        deepDive: d.deepDive
-    }));
-
-    // Calculate Average
-    const avgRaw = { sales: 0, survival: 0, saturation: 0, efficiency: 0, weekend: 0 };
-    processed.forEach(d => {
-        avgRaw.sales += d.rawSales;
-        avgRaw.survival += d.rawSurvival;
-        avgRaw.saturation += d.rawSaturation;
-        avgRaw.efficiency += d.rawEfficiency;
-        avgRaw.weekend += d.rawWeekend;
-    });
-    const count = processed.length;
-    if (count > 0) {
-        avgRaw.sales /= count;
-        avgRaw.survival /= count;
-        avgRaw.saturation /= count;
-        avgRaw.efficiency /= count;
-        avgRaw.weekend /= count;
-    }
-    const averageData = {
-        stats: [
-            { axis: "매출력 (Sales)", value: scale(avgRaw.sales, salesExt), raw: (avgRaw.sales / 100000000).toFixed(1) + "억원" },
-            { axis: "생존력 (Survival)", value: scale(avgRaw.survival, survivalExt), raw: avgRaw.survival.toFixed(1) + "%" },
-            { axis: "포화도 (Saturation)", value: scale(avgRaw.saturation, saturationExt), raw: avgRaw.saturation.toFixed(0) + "개" },
-            { axis: "효율성 (Efficiency)", value: scale(avgRaw.efficiency, efficiencyExt), raw: (avgRaw.efficiency / 10000).toFixed(1) + "만원/점포" },
-            { axis: "주말바이브 (Weekend)", value: scale(avgRaw.weekend, weekendExt), raw: avgRaw.weekend.toFixed(1) + "%" }
-        ],
-        deepDive: null
-    };
-    setAverageData(averageData);
-
-    setSeoulData(finalData);
-    window.seoulData = finalData;
-
-    // Reset selection if invalid
-    const validIds = finalData.map(d => d.id);
-    const newSelection = selectedIds.filter(id => validIds.includes(id));
-    if (newSelection.length < 2 && finalData.length >= 2) {
-        setSelectedIds([finalData[0].id, finalData[1].id]);
-    } else {
-        setSelectedIds(newSelection);
+    if (seoulData.length === 0) {
+        return (
+            <div className="container" style={{ padding: '2rem', color: 'white' }}>
+                <h2>⚠️ No Data Loaded</h2>
+                <p>No data found matching your criteria. Please adjust filters.</p>
+            </div>
+        );
     }
 
-    setLoading(false);
-};
-
-const handleSelect = (id) => {
-    if (selectedIds.includes(id)) {
-        setSelectedIds(selectedIds.filter(s => s !== id));
-    } else {
-        if (selectedIds.length >= 2) {
-            setSelectedIds([selectedIds[1], id]);
-        } else {
-            setSelectedIds([...selectedIds, id]);
-        }
-    }
-};
-
-const selectedData = seoulData.filter(d => selectedIds.includes(d.id));
-
-if (loading) {
-    return <div className="loading-container">Loading market data...</div>;
-}
-
-if (seoulData.length === 0) {
     return (
-        <div className="container" style={{ padding: '2rem', color: 'white' }}>
-            <h2>⚠️ No Data Loaded</h2>
-            <p>No data found matching your criteria. Please adjust filters.</p>
-        </div>
-    );
-}
-
-return (
-    <div className="container">
-        <div className="header">
-            <h1>🍗 Seoul Market Radar</h1>
-            <p>Compare market stats for Seoul districts & neighborhoods</p>
-        </div>
-
-        <div className="dashboard-grid">
-            {/* 1. Control Panel */}
-            <div className="district-panel">
-                {/* Filters */}
-                <div className="filters-section">
-                    <h3>Filters</h3>
-
-                    <div className="filter-group">
-                        <label>Region (Gu)</label>
-                        <select value={selectedGu} onChange={(e) => {
-                            setSelectedGu(e.target.value);
-                            setSelectedDong('All'); // Reset Dong when Gu changes
-                        }}>
-                            <option value="All">All Seoul</option>
-                            {guList.map(gu => <option key={gu} value={gu}>{gu}</option>)}
-                        </select>
-                    </div>
-
-                    <div className="filter-group">
-                        <label>Neighborhood (Dong)</label>
-                        <select
-                            value={selectedDong}
-                            onChange={(e) => setSelectedDong(e.target.value)}
-                            disabled={selectedGu === 'All'}
-                        >
-                            <option value="All">All Neighborhoods</option>
-                            {selectedGu !== 'All' && dongList[selectedGu]?.map(dong => (
-                                <option key={dong} value={dong}>{dong}</option>
-                            ))}
-                        </select>
-                    </div>
-
-                    <div className="filter-group">
-                        <label>Industry</label>
-                        <select value={selectedIndustry} onChange={(e) => setSelectedIndustry(e.target.value)}>
-                            <option value="All">All Industries</option>
-                            {industryList.map(ind => <option key={ind} value={ind}>{ind}</option>)}
-                        </select>
-                    </div>
-
-                    <div className="filter-group">
-                        <label>Min. Monthly Revenue (100M KRW)</label>
-                        <input
-                            type="range"
-                            min="0"
-                            max="50"
-                            step="1"
-                            value={minRevenue}
-                            onChange={(e) => setMinRevenue(Number(e.target.value))}
-                        />
-                        <span>{minRevenue} 억+</span>
-                    </div>
-                </div>
-
-                <h3>
-                    Select {selectedGu === 'All' ? 'District' : 'Neighborhood'}
-                    <span style={{ fontSize: "0.9rem", color: "var(--text-secondary)" }}>
-                        ({selectedIds.length}/2)
-                    </span>
-                </h3>
-                <div className="district-list">
-                    {seoulData.map(d => {
-                        const isSelected = selectedIds.includes(d.id);
-                        const selectionIndex = selectedIds.indexOf(d.id);
-                        const selectionClass = selectionIndex === 0 ? 'selected-1' : selectionIndex === 1 ? 'selected-2' : '';
-
-                        return (
-                            <button
-                                key={d.id}
-                                onClick={() => handleSelect(d.id)}
-                                className={`district-btn ${isSelected ? selectionClass : ''}`}
-                            >
-                                {d.name}
-                                {isSelected && <span className="dot" style={{ backgroundColor: selectionIndex === 0 ? 'var(--accent-primary)' : 'var(--accent-secondary)' }}></span>}
-                            </button>
-                        );
-                    })}
-                </div>
+        <div className="container">
+            <div className="header">
+                <h1>🍗 Seoul Market Radar</h1>
+                <p>Compare market stats for Seoul districts & neighborhoods</p>
             </div>
 
-            {/* 2. Visualization Area */}
-            <ComparisonPanel
-                selectedDistricts={selectedData}
-                historyData={historyData}
-                timeRange={timeRange}
-                averageData={averageData}
-                averageHistory={averageHistory}
-            />
+            <div className="dashboard-grid">
+                {/* 1. Control Panel */}
+                <div className="district-panel">
+                    {/* Filters */}
+                    <div className="filters-section">
+                        <h3>Filters</h3>
+
+                        <div className="filter-group">
+                            <label>Region (Gu)</label>
+                            <select value={selectedGu} onChange={(e) => {
+                                setSelectedGu(e.target.value);
+                                setSelectedDong('All'); // Reset Dong when Gu changes
+                            }}>
+                                <option value="All">All Seoul</option>
+                                {guList.map(gu => <option key={gu} value={gu}>{gu}</option>)}
+                            </select>
+                        </div>
+
+                        <div className="filter-group">
+                            <label>Neighborhood (Dong)</label>
+                            <select
+                                value={selectedDong}
+                                onChange={(e) => setSelectedDong(e.target.value)}
+                                disabled={selectedGu === 'All'}
+                            >
+                                <option value="All">All Neighborhoods</option>
+                                {selectedGu !== 'All' && dongList[selectedGu]?.map(dong => (
+                                    <option key={dong} value={dong}>{dong}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        <div className="filter-group">
+                            <label>Industry</label>
+                            <select value={selectedIndustry} onChange={(e) => setSelectedIndustry(e.target.value)}>
+                                <option value="All">All Industries</option>
+                                {industryList.map(ind => <option key={ind} value={ind}>{ind}</option>)}
+                            </select>
+                        </div>
+
+                        <div className="filter-group">
+                            <label>Min. Monthly Revenue (100M KRW)</label>
+                            <input
+                                type="range"
+                                min="0"
+                                max="50"
+                                step="1"
+                                value={minRevenue}
+                                onChange={(e) => setMinRevenue(Number(e.target.value))}
+                            />
+                            <span>{minRevenue} 억+</span>
+                        </div>
+                    </div>
+
+                    <h3>
+                        Select {selectedGu === 'All' ? 'District' : 'Neighborhood'}
+                        <span style={{ fontSize: "0.9rem", color: "var(--text-secondary)" }}>
+                            ({selectedIds.length}/2)
+                        </span>
+                    </h3>
+                    <div className="district-list">
+                        {seoulData.map(d => {
+                            const isSelected = selectedIds.includes(d.id);
+                            const selectionIndex = selectedIds.indexOf(d.id);
+                            const selectionClass = selectionIndex === 0 ? 'selected-1' : selectionIndex === 1 ? 'selected-2' : '';
+
+                            return (
+                                <button
+                                    key={d.id}
+                                    onClick={() => handleSelect(d.id)}
+                                    className={`district-btn ${isSelected ? selectionClass : ''}`}
+                                >
+                                    {d.name}
+                                    {isSelected && <span className="dot" style={{ backgroundColor: selectionIndex === 0 ? 'var(--accent-primary)' : 'var(--accent-secondary)' }}></span>}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                {/* 2. Visualization Area */}
+                <ComparisonPanel
+                    selectedDistricts={selectedData}
+                    historyData={historyData}
+                    timeRange={timeRange}
+                    averageData={averageData}
+                    averageHistory={averageHistory}
+                />
+            </div>
         </div>
-    </div>
-);
+    );
 };
 
 export default ChickenBattleArena;
